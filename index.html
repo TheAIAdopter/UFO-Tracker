@@ -15,6 +15,7 @@
             font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: #000;
             color: #fff;
+            overflow: hidden;
         }
         .camera-view {
             position: fixed;
@@ -28,6 +29,35 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+        }
+        .ar-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        .object-marker {
+            position: absolute;
+            background: rgba(255,255,255,0.2);
+            border: 2px solid rgba(255,255,255,0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            padding: 10px;
+            backdrop-filter: blur(4px);
+        }
+        .aircraft {
+            border-color: rgba(0,255,255,0.8);
+            color: cyan;
+        }
+        .satellite {
+            border-color: rgba(255,200,0,0.8);
+            color: yellow;
         }
         .controls {
             position: fixed;
@@ -64,37 +94,69 @@
             padding: 10px;
             border-radius: 10px;
             font-size: 14px;
+            backdrop-filter: blur(4px);
         }
         .coordinates {
             margin-bottom: 5px;
+        }
+        .object-list {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 14px;
+            max-width: 200px;
+            max-height: 40vh;
+            overflow-y: auto;
+            backdrop-filter: blur(4px);
+        }
+        .object-item {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        .object-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
         }
     </style>
 </head>
 <body>
     <div class="camera-view">
         <video id="cameraFeed" autoplay playsinline muted></video>
+        <div class="ar-overlay" id="arOverlay"></div>
         <div class="info-overlay">
             <div class="coordinates">Position: <span id="position">En attente...</span></div>
             <div class="coordinates">Direction: <span id="direction">En attente...</span></div>
+            <div class="coordinates">Élévation: <span id="elevation">En attente...</span></div>
+        </div>
+        <div class="object-list" id="objectList">
+            <h3 style="margin-top: 0;">Objets détectés</h3>
         </div>
         <div class="controls">
             <button id="recordBtn" class="btn">Démarrer</button>
-            <button id="shareBtn" class="btn">Partager</button>
+            <button id="filterBtn" class="btn">Filtres</button>
         </div>
     </div>
 
     <script>
         let recording = false;
-        const recordBtn = document.getElementById('recordBtn');
-        const shareBtn = document.getElementById('shareBtn');
-        const positionSpan = document.getElementById('position');
-        const directionSpan = document.getElementById('direction');
+        let currentPosition = null;
+        let currentOrientation = null;
+        let knownObjects = [];
         
         // Initialiser la caméra
         async function initCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' },
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
                     audio: false
                 });
                 document.getElementById('cameraFeed').srcObject = stream;
@@ -104,35 +166,171 @@
         }
 
         // Géolocalisation
-        if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(position => {
-                const { latitude, longitude } = position.coords;
-                positionSpan.textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-            }, error => {
-                positionSpan.textContent = 'Erreur GPS';
-            }, {
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 5000
-            });
+        function initGeolocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(position => {
+                    currentPosition = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        altitude: position.coords.altitude || 0
+                    };
+                    document.getElementById('position').textContent = 
+                        `${currentPosition.latitude.toFixed(6)}, ${currentPosition.longitude.toFixed(6)}`;
+                    updateKnownObjects();
+                }, error => {
+                    document.getElementById('position').textContent = 'Erreur GPS';
+                }, {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                });
+            }
         }
 
         // Orientation
-        if (window.DeviceOrientationEvent) {
-            window.addEventListener('deviceorientation', event => {
-                if (event.alpha) {
-                    directionSpan.textContent = `${event.alpha.toFixed(1)}°`;
+        function initOrientation() {
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', event => {
+                    currentOrientation = {
+                        alpha: event.alpha || 0, // Boussole
+                        beta: event.beta || 0,   // Avant-arrière
+                        gamma: event.gamma || 0   // Gauche-droite
+                    };
+                    document.getElementById('direction').textContent = `${currentOrientation.alpha.toFixed(1)}°`;
+                    document.getElementById('elevation').textContent = `${currentOrientation.beta.toFixed(1)}°`;
+                    updateAROverlay();
+                });
+            }
+        }
+
+        // Mise à jour des objets connus
+        async function updateKnownObjects() {
+            if (!currentPosition) return;
+
+            // Récupérer les avions à proximité (simulation)
+            const aircrafts = await fetchNearbyAircrafts();
+            
+            // Récupérer les satellites visibles (simulation)
+            const satellites = await fetchVisibleSatellites();
+
+            knownObjects = [...aircrafts, ...satellites];
+            updateObjectList();
+            updateAROverlay();
+        }
+
+        // Simulation de la récupération des avions
+        async function fetchNearbyAircrafts() {
+            // Simulation de données d'avions
+            const radius = 0.5; // 50km
+            return [{
+                type: 'aircraft',
+                id: 'AF1234',
+                latitude: currentPosition.latitude + (Math.random() - 0.5) * radius,
+                longitude: currentPosition.longitude + (Math.random() - 0.5) * radius,
+                altitude: 10000,
+                heading: Math.random() * 360,
+                speed: 800
+            }];
+        }
+
+        // Simulation de la récupération des satellites
+        async function fetchVisibleSatellites() {
+            // Simulation de données de satellites
+            return [{
+                type: 'satellite',
+                id: 'ISS',
+                latitude: currentPosition.latitude + (Math.random() - 0.5) * 0.1,
+                longitude: currentPosition.longitude + (Math.random() - 0.5) * 0.1,
+                altitude: 408000,
+                velocity: 7.66
+            }];
+        }
+
+        // Mise à jour de la liste des objets
+        function updateObjectList() {
+            const listElement = document.getElementById('objectList');
+            listElement.innerHTML = '<h3 style="margin-top: 0;">Objets détectés</h3>';
+            
+            knownObjects.forEach(obj => {
+                const div = document.createElement('div');
+                div.className = 'object-item';
+                if (obj.type === 'aircraft') {
+                    div.innerHTML = `
+                        <strong style="color: cyan;">${obj.id}</strong><br>
+                        Alt: ${obj.altitude}m<br>
+                        Vitesse: ${obj.speed}km/h
+                    `;
+                } else if (obj.type === 'satellite') {
+                    div.innerHTML = `
+                        <strong style="color: yellow;">${obj.id}</strong><br>
+                        Alt: ${obj.altitude}km<br>
+                        Vitesse: ${obj.velocity}km/s
+                    `;
+                }
+                listElement.appendChild(div);
+            });
+        }
+
+        // Mise à jour de la superposition AR
+        function updateAROverlay() {
+            if (!currentPosition || !currentOrientation) return;
+
+            const overlay = document.getElementById('arOverlay');
+            overlay.innerHTML = '';
+
+            knownObjects.forEach(obj => {
+                // Calcul de la position à l'écran basée sur les coordonnées réelles
+                const screenPosition = calculateScreenPosition(obj);
+                if (screenPosition) {
+                    const marker = document.createElement('div');
+                    marker.className = `object-marker ${obj.type}`;
+                    marker.style.left = `${screenPosition.x}%`;
+                    marker.style.top = `${screenPosition.y}%`;
+                    marker.innerHTML = `
+                        ${obj.id}<br>
+                        ${Math.round(obj.altitude)}${obj.type === 'aircraft' ? 'm' : 'km'}
+                    `;
+                    overlay.appendChild(marker);
                 }
             });
         }
 
-        // Boutons
-        recordBtn.addEventListener('click', () => {
+        // Calcul de la position sur l'écran
+        function calculateScreenPosition(obj) {
+            // Calcul de l'azimut et de l'élévation relatifs
+            const dLat = obj.latitude - currentPosition.latitude;
+            const dLon = obj.longitude - currentPosition.longitude;
+            
+            // Azimut (direction horizontale)
+            const azimuth = Math.atan2(dLon, dLat) * 180 / Math.PI;
+            
+            // Élévation (angle vertical)
+            const distance = Math.sqrt(dLat * dLat + dLon * dLon);
+            const elevation = Math.atan2(obj.altitude, distance * 111000) * 180 / Math.PI;
+
+            // Position relative à la vue de la caméra
+            const relativeAzimuth = azimuth - currentOrientation.alpha;
+            const relativeElevation = elevation - currentOrientation.beta;
+
+            // Conversion en coordonnées écran
+            if (Math.abs(relativeAzimuth) < 45 && Math.abs(relativeElevation) < 45) {
+                return {
+                    x: 50 + relativeAzimuth,
+                    y: 50 - relativeElevation
+                };
+            }
+            return null;
+        }
+
+        // Initialisation
+        document.getElementById('recordBtn').addEventListener('click', () => {
             recording = !recording;
-            recordBtn.textContent = recording ? 'Arrêter' : 'Démarrer';
-            recordBtn.classList.toggle('btn-record', recording);
             if (recording) {
                 initCamera();
+                initGeolocation();
+                initOrientation();
+                document.getElementById('recordBtn').textContent = 'Arrêter';
+                document.getElementById('recordBtn').classList.add('btn-record');
             } else {
                 const video = document.getElementById('cameraFeed');
                 const stream = video.srcObject;
@@ -140,31 +338,13 @@
                     stream.getTracks().forEach(track => track.stop());
                 }
                 video.srcObject = null;
+                document.getElementById('recordBtn').textContent = 'Démarrer';
+                document.getElementById('recordBtn').classList.remove('btn-record');
             }
         });
 
-        shareBtn.addEventListener('click', async () => {
-            if (positionSpan.textContent !== 'En attente...') {
-                try {
-                    await navigator.share({
-                        title: 'UFO Observation',
-                        text: `Observation à ${positionSpan.textContent}`,
-                        url: window.location.href
-                    });
-                } catch (error) {
-                    if (error.name !== 'AbortError') {
-                        alert('Erreur de partage: ' + error.message);
-                    }
-                }
-            }
-        });
-
-        // Service Worker pour PWA
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js')
-                .then(registration => console.log('ServiceWorker enregistré'))
-                .catch(error => console.error('Erreur ServiceWorker:', error));
-        }
+        // Mise à jour périodique des objets
+        setInterval(updateKnownObjects, 5000);
     </script>
 </body>
 </html>
