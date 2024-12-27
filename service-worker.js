@@ -1,4 +1,3 @@
-```javascript
 const CACHE_NAME = 'ufo-tracker-v1';
 const urlsToCache = [
   '/UFO-Tracker/',
@@ -21,4 +20,3 @@ self.addEventListener('fetch', event => {
       .then(response => response || fetch(event.request))
   );
 });
-```
