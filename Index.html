@@ -1,0 +1,179 @@
+
+```html
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UFO Tracker Network</title>
+    <meta name="description" content="Application de suivi d'OVNI en temps réel">
+    <meta name="theme-color" content="#000000">
+    <link rel="manifest" href="manifest.json">
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #000;
+            color: #fff;
+        }
+        .camera-view {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+        #cameraFeed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            padding: 20px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+        }
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            font-size: 16px;
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-record {
+            background: rgba(255,59,48,0.8);
+        }
+        .info-overlay {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        .coordinates {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="camera-view">
+        <video id="cameraFeed" autoplay playsinline muted></video>
+        <div class="info-overlay">
+            <div class="coordinates">Position: <span id="position">En attente...</span></div>
+            <div class="coordinates">Direction: <span id="direction">En attente...</span></div>
+        </div>
+        <div class="controls">
+            <button id="recordBtn" class="btn">Démarrer</button>
+            <button id="shareBtn" class="btn">Partager</button>
+        </div>
+    </div>
+
+    <script>
+        let recording = false;
+        const recordBtn = document.getElementById('recordBtn');
+        const shareBtn = document.getElementById('shareBtn');
+        const positionSpan = document.getElementById('position');
+        const directionSpan = document.getElementById('direction');
+        
+        // Initialiser la caméra
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' },
+                    audio: false
+                });
+                document.getElementById('cameraFeed').srcObject = stream;
+            } catch (error) {
+                alert('Erreur d\'accès à la caméra: ' + error.message);
+            }
+        }
+
+        // Géolocalisation
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(position => {
+                const { latitude, longitude } = position.coords;
+                positionSpan.textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+            }, error => {
+                positionSpan.textContent = 'Erreur GPS';
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 5000
+            });
+        }
+
+        // Orientation
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', event => {
+                if (event.alpha) {
+                    directionSpan.textContent = `${event.alpha.toFixed(1)}°`;
+                }
+            });
+        }
+
+        // Boutons
+        recordBtn.addEventListener('click', () => {
+            recording = !recording;
+            recordBtn.textContent = recording ? 'Arrêter' : 'Démarrer';
+            recordBtn.classList.toggle('btn-record', recording);
+            if (recording) {
+                initCamera();
+            } else {
+                const video = document.getElementById('cameraFeed');
+                const stream = video.srcObject;
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                video.srcObject = null;
+            }
+        });
+
+        shareBtn.addEventListener('click', async () => {
+            if (positionSpan.textContent !== 'En attente...') {
+                try {
+                    await navigator.share({
+                        title: 'UFO Observation',
+                        text: `Observation à ${positionSpan.textContent}`,
+                        url: window.location.href
+                    });
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        alert('Erreur de partage: ' + error.message);
+                    }
+                }
+            }
+        });
+
+        // Service Worker pour PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js')
+                .then(registration => console.log('ServiceWorker enregistré'))
+                .catch(error => console.error('Erreur ServiceWorker:', error));
+        }
+    </script>
+</body>
+</html>
+```
+
+3. En bas de la page, dans la section "Commit new file" :
+   - Laissez le message par défaut
+   - Cliquez sur le bouton vert "Commit new file"
+
+Dites-moi "ok" quand c'est fait, et je vous donnerai le prochain fichier à créer.
